@@ -6,6 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+var (
+	write = []byte("hello world")
 )
 
 func TestHandleProduce(t *testing.T) {
@@ -14,13 +20,11 @@ func TestHandleProduce(t *testing.T) {
 	// Create a sample record to produce
 	reqBody := ProduceRequest{
 		Record: Record{
-			Value: []byte("test data"),
+			Value: write,
 		},
 	}
 	body, err := json.Marshal(reqBody)
-	if err != nil {
-		t.Fatalf("Failed to marshal request body: %v", err)
-	}
+	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
 	w := httptest.NewRecorder()
@@ -30,18 +34,10 @@ func TestHandleProduce(t *testing.T) {
 	res := w.Result()
 	defer res.Body.Close()
 
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("Expected status OK; got %v", res.StatusCode)
-	}
-
+	require.Equal(t, http.StatusOK, res.StatusCode)
 	var produceRes ProduceResponse
-	if err := json.NewDecoder(res.Body).Decode(&produceRes); err != nil {
-		t.Fatalf("Failed to decode response: %v", err)
-	}
-
-	if produceRes.Offset != 0 {
-		t.Fatalf("Expected offset 0; got %v", produceRes.Offset)
-	}
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&produceRes))
+	require.Equal(t, uint64(0), produceRes.Offset)
 }
 
 func TestHandleConsume(t *testing.T) {
@@ -50,13 +46,11 @@ func TestHandleConsume(t *testing.T) {
 	// First, produce a record to consume later
 	reqBody := ProduceRequest{
 		Record: Record{
-			Value: []byte("test data"),
+			Value: write,
 		},
 	}
 	body, err := json.Marshal(reqBody)
-	if err != nil {
-		t.Fatalf("Failed to marshal request body: %v", err)
-	}
+	require.NoError(t, err)
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 	srv.handleProduce(w, req)
@@ -64,9 +58,7 @@ func TestHandleConsume(t *testing.T) {
 	// Now consume the record we just produced
 	consumeReq := ConsumeRequest{Offset: 0}
 	consumeBody, err := json.Marshal(consumeReq)
-	if err != nil {
-		t.Fatalf("Failed to marshal consume request body: %v", err)
-	}
+	require.NoError(t, err)
 	req = httptest.NewRequest(http.MethodGet, "/", bytes.NewReader(consumeBody))
 	w = httptest.NewRecorder()
 
@@ -75,22 +67,11 @@ func TestHandleConsume(t *testing.T) {
 	res := w.Result()
 	defer res.Body.Close()
 
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("Expected status OK; got %v", res.StatusCode)
-	}
-
+	require.Equal(t, http.StatusOK, res.StatusCode)
 	var consumeRes ConsumeResponse
-	if err := json.NewDecoder(res.Body).Decode(&consumeRes); err != nil {
-		t.Fatalf("Failed to decode response: %v", err)
-	}
-
-	if string(consumeRes.Record.Value) != "test data" {
-		t.Fatalf("Expected record value 'test data'; got %v", string(consumeRes.Record.Value))
-	}
-
-	if consumeRes.Record.Offset != 0 {
-		t.Fatalf("Expected record offset 0; got %v", consumeRes.Record.Offset)
-	}
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&consumeRes))
+	require.Equal(t, string(write), string(consumeRes.Record.Value))
+	require.Equal(t, uint64(0), consumeRes.Record.Offset)
 }
 
 func TestHandleConsumeNotFound(t *testing.T) {
@@ -99,9 +80,7 @@ func TestHandleConsumeNotFound(t *testing.T) {
 	// Try to consume a record that doesn't exist
 	consumeReq := ConsumeRequest{Offset: 999}
 	consumeBody, err := json.Marshal(consumeReq)
-	if err != nil {
-		t.Fatalf("Failed to marshal consume request body: %v", err)
-	}
+	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodGet, "/", bytes.NewReader(consumeBody))
 	w := httptest.NewRecorder()
@@ -111,7 +90,5 @@ func TestHandleConsumeNotFound(t *testing.T) {
 	res := w.Result()
 	defer res.Body.Close()
 
-	if res.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("Expected status Internal Server Error; got %v", res.StatusCode)
-	}
+	require.Equal(t, http.StatusInternalServerError, res.StatusCode)
 }
