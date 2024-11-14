@@ -61,8 +61,9 @@ func testAppendRead(t *testing.T, log *Log) {
 func testOutOfRangeErr(t *testing.T, log *Log) {
 	// Attempt to read from an offset that doesn't exist (offset 1 in an empty log)
 	read, err := log.Read(1)
-	require.Nil(t, read)  // No record should be returned
-	require.Error(t, err) // Ensure an error is returned
+	require.Nil(t, read) // No record should be returned
+	apiErr := err.(api.ErrOffsetOutOfRange)
+	require.Equal(t, uint64(1), apiErr.Offset) // Ensure an error is returned
 }
 
 // testInitExisting tests initializing a log with existing segments.
