@@ -7,10 +7,11 @@ import (
 	"testing"
 
 	api "github.com/glauco/proglog/api/v1"
+	"github.com/glauco/proglog/internal/config"
 	"github.com/glauco/proglog/internal/log"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 )
 
@@ -41,14 +42,23 @@ func setupTest(t *testing.T, fn func(*Config)) (client api.LogClient, cfg *Confi
 	t.Helper()
 
 	// Start a TCP listener on a random available port
-	l, err := net.Listen("tcp", ":0")
+	l, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
-	// Set up gRPC dial options for connecting to the server without encryption
-	clientOptions := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	clientTLSConfig, err := config.SetupTLSConfig(config.TLSConfig{
+		CAFile: config.CAFile,
+	})
+	require.NoError(t, err)
+
+	clientCreds := credentials.NewTLS(clientTLSConfig)
+
+	// Set up gRPC dial options for connecting to the server with TLS encryption
+	clientOptions := []grpc.DialOption{grpc.WithTransportCredentials(clientCreds)}
 	// Create a new gRPC client connection
 	cc, err := grpc.NewClient(l.Addr().String(), clientOptions...)
 	require.NoError(t, err)
+
+	client = api.NewLogClient(cc)
 
 	// Create a temporary directory for the log files
 	dir := t.TempDir()
@@ -66,8 +76,17 @@ func setupTest(t *testing.T, fn func(*Config)) (client api.LogClient, cfg *Confi
 		fn(cfg) // If provided, apply additional configuration modifications
 	}
 
+	serverTLSConfig, err := config.SetupTLSConfig(config.TLSConfig{
+		CertFile:      config.ServerCertFile,
+		KeyFile:       config.ServerKeyFile,
+		CAFile:        config.CAFile,
+		ServerAddress: l.Addr().String(),
+	})
+	require.NoError(t, err)
+	serverCreds := credentials.NewTLS(serverTLSConfig)
+
 	// Create the gRPC server using the configuration
-	server, err := NewGRPCServer(cfg)
+	server, err := NewGRPCServer(cfg, grpc.Creds(serverCreds))
 	require.NoError(t, err)
 
 	// Start the server in a separate goroutine

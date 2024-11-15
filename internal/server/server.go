@@ -115,9 +115,9 @@ type CommitLog interface {
 
 // NewGRPCServer creates a new gRPC server instance, registers the LogServer service, and returns it.
 // It is responsible for setting up the gRPC server and linking the server logic.
-func NewGRPCServer(config *Config) (*grpc.Server, error) {
+func NewGRPCServer(config *Config, opts ...grpc.ServerOption) (*grpc.Server, error) {
 	// Create a new gRPC server instance
-	gsrv := grpc.NewServer()
+	gsrv := grpc.NewServer(opts...)
 
 	// Create a new grpcServer instance using the provided configuration
 	srv, err := newgrpcServer(config)
