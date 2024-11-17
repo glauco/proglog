@@ -4,13 +4,30 @@ import (
 	"context"
 
 	api "github.com/glauco/proglog/api/v1"
+	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
+	grpc_auth "github.com/grpc-ecosystem/go-grpc-middleware/auth"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 )
 
 // Config contains the dependencies required by the gRPC server.
 type Config struct {
-	CommitLog CommitLog // CommitLog is an interface used to append and read log records.
+	CommitLog  CommitLog // CommitLog is an interface used to append and read log records.
+	Authorizer Authorizer
 }
+
+type Authorizer interface {
+	Authorize(subject, object, action string) error
+}
+
+const (
+	objectWildCard = "*"
+	produceAction  = "produce"
+	consumeAction  = "consume"
+)
 
 // Ensure grpcServer implements the api.LogServer interface.
 // This helps catch implementation errors during compile time.
@@ -35,6 +52,13 @@ func newgrpcServer(config *Config) (srv *grpcServer, err error) {
 // Produce handles producing (adding) a record to the commit log.
 // It returns the offset at which the record was stored.
 func (s *grpcServer) Produce(ctx context.Context, req *api.ProduceRequest) (*api.ProduceResponse, error) {
+	if err := s.Authorizer.Authorize(
+		subject(ctx),
+		objectWildCard,
+		produceAction,
+	); err != nil {
+		return nil, err
+	}
 	// Append the record to the commit log
 	offset, err := s.CommitLog.Append(req.Record)
 	if err != nil {
@@ -47,6 +71,13 @@ func (s *grpcServer) Produce(ctx context.Context, req *api.ProduceRequest) (*api
 // Consume handles reading a record from the commit log at a given offset.
 // It returns the record in a ConsumeResponse.
 func (s *grpcServer) Consume(ctx context.Context, req *api.ConsumeRequest) (*api.ConsumeResponse, error) {
+	if err := s.Authorizer.Authorize(
+		subject(ctx),
+		objectWildCard,
+		consumeAction,
+	); err != nil {
+		return nil, err
+	}
 	// Read the record from the commit log at the given offset
 	record, err := s.CommitLog.Read(req.Offset)
 	if err != nil {
@@ -116,6 +147,13 @@ type CommitLog interface {
 // NewGRPCServer creates a new gRPC server instance, registers the LogServer service, and returns it.
 // It is responsible for setting up the gRPC server and linking the server logic.
 func NewGRPCServer(config *Config, opts ...grpc.ServerOption) (*grpc.Server, error) {
+	opts = append(opts, grpc.StreamInterceptor(
+		grpc_middleware.ChainStreamServer(
+			grpc_auth.StreamServerInterceptor(authenticate),
+		)), grpc.UnaryInterceptor(grpc_middleware.ChainUnaryServer(
+		grpc_auth.UnaryServerInterceptor(authenticate),
+	)))
+
 	// Create a new gRPC server instance
 	gsrv := grpc.NewServer(opts...)
 
@@ -131,3 +169,32 @@ func NewGRPCServer(config *Config, opts ...grpc.ServerOption) (*grpc.Server, err
 	// Return the configured gRPC server
 	return gsrv, nil
 }
+
+func authenticate(ctx context.Context) (context.Context, error) {
+	peer, ok := peer.FromContext(ctx)
+	if !ok {
+		return ctx, status.New(
+			codes.Unknown,
+			"couldn't find peer info",
+		).Err()
+	}
+
+	if peer.AuthInfo == nil {
+		return ctx, status.New(
+			codes.Unauthenticated,
+			"no transport security being used",
+		).Err()
+	}
+
+	tlsInfo := peer.AuthInfo.(credentials.TLSInfo)
+	subject := tlsInfo.State.VerifiedChains[0][0].Subject.CommonName
+	ctx = context.WithValue(ctx, subjectContextKey{}, subject)
+
+	return ctx, nil
+}
+
+func subject(ctx context.Context) string {
+	return ctx.Value(subjectContextKey{}).(string)
+}
+
+type subjectContextKey struct{}
